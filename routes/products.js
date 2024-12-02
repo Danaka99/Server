@@ -2,24 +2,89 @@ const { Category } = require('../models/category');
 const { Product } = require('../models/product'); 
 const express = require('express');
 const router = express.Router();
-const pLimit = require('p-limit');
-const cloudinary = require('cloudinary').v2;
+// const pLimit = require('p-limit');
+//const cloudinary = require('cloudinary').v2;
+const multer  = require('multer');
+const fs = require('fs');
+
 
 
 // Cloudinary configuration
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CONFIG_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_CONFIG_API_KEY,
-  api_secret: process.env.CLOUDINARY_CONFIG_API_SECRET,
+// cloudinary.config({
+//   cloud_name: process.env.CLOUDINARY_CONFIG_CLOUD_NAME,
+//   api_key: process.env.CLOUDINARY_CONFIG_API_KEY,
+//   api_secret: process.env.CLOUDINARY_CONFIG_API_SECRET,
+// });
+var imagesArr=[];
+var productEditId;
+
+const storage = multer.diskStorage({
+    destination:function(req,file,cb){
+        cb(null,"uploads");
+    },
+    filename:function(req,file,cb){
+        cb(null, `${Date.now()}_${file.originalname}`);
+    },
+})
+
+const upload = multer({storage:storage})
+
+router.post(`/upload`, upload.array("images"), async (req, res) => {
+
+    let images;
+    if(productEditId !== undefined){
+        const product= await Product.findById(productEditId);
+
+        if(product){
+            images=product.images;
+            console.log(images)
+        }
+        if (images.length !==0){
+            for(image of images){
+                fs.unlinkSync(`uploads/${image}`);
+            }
+            productEditId="";
+        }
+    }
+    imagesArr=[];
+    const files = req.files;
+
+    for(let i=0; i<files.length;i++){
+        imagesArr.push(files[i].filename);
+    }
+   
+    res.send(imagesArr);
 });
 
 // Get all products
 router.get('/', async (req, res) => {
-    const productList = await Product.find().populate("category");
+
+    try{
+    const page = parseInt(req.query.page) ||1;
+        const perPage=10;
+        const totalPosts = await Product.countDocuments();
+        const totalPages=Math.ceil(totalPosts/perPage);
+
+    if(page>totalPages){
+        return res.status(404).json({message:"page not found"})
+    }
+
+    const productList = await Product.find().populate("category")
+    .skip((page - 1)*perPage)
+    .limit(perPage)
+    .exec();
+
     if (!productList) {
         res.status(500).json({ success: false });
     }
-    res.send(productList);
+    return res.status(200).json({
+        "products":productList,
+        "totalPages":totalPages,
+        "page":page
+    });
+    }catch(error){
+         res.send(productList);
+    }
 });
 
 // Create a new product
@@ -32,38 +97,17 @@ router.post('/create', async (req, res) => {
         return res.status(404).send("invalid Category!")
     }
 
-    const limit = pLimit(2);
-
-    const imagesToUpload = req.body.images.map((image) => {
-        return limit(async () => {
-            const result = await cloudinary.uploader.upload(image);
-            return result;
-        });
-    });
-
-    const uploadStatus = await Promise.all(imagesToUpload);
-    const imgurl = uploadStatus.map((item) => item.secure_url);
-
-    if (!uploadStatus) {
-        return res.status(500).json({
-            error: "Images cannot upload!",
-            status: false
-        });
-    }
-     
-
     let product = new Product({
         name:req.body.name,
         description:req.body.description,
-        images:imgurl,
+        images:imagesArr,
         brand:req.body.brand,
         price:req.body.price,
+        oldPrice:req.body.oldPrice,
         category:req.body.category,
         CountInStock:req.body.CountInStock,
         rating:req.body.rating,
-        numReviews:req.body.numReviews,
         isFeatured:req.body.isFeatured,
-        dateCreated:req.body.dateCreated,
     })
 
     product= await product.save();
@@ -81,6 +125,16 @@ router.post('/create', async (req, res) => {
 
 // Delete a products
 router.delete('/:id', async (req, res) => {
+
+    const product = await Product.findById(req.params.id);
+    const images = product.images;
+
+    if(images.length!==0){
+        for(image of images){
+            fs.unlinkSync(`uploads/${images}`)
+        }
+    }
+
     const deletedProduct = await Product.findByIdAndDelete(req.params.id);
 
     if (!deletedProduct) {
@@ -97,6 +151,8 @@ router.delete('/:id', async (req, res) => {
 });
 
 router.get('/:id', async (req, res) => {
+    productEditId=req.params.id;
+
     const product = await Product.findById(req.params.id);
     if (!product) {
         res.status(500).json({ message: 'the product with the given ID was not found.' });
@@ -125,31 +181,31 @@ router.delete('/:id', async (req, res) => {
 //put Product
 router.put('/:id',async(req,res)=>{
 
-    const limit = pLimit(2);
+    // const limit = pLimit(2);
 
-    const imagesToUpload = req.body.images.map((image) => {
-        return limit(async () => {
-            const result = await cloudinary.uploader.upload(image);
-            return result;
-        });
-    });
+    // const imagesToUpload = req.body.images.map((image) => {
+    //     return limit(async () => {
+    //         const result = await cloudinary.uploader.upload(image);
+    //         return result;
+    //     });
+    // });
 
-    const uploadStatus = await Promise.all(imagesToUpload);
-    const imgurl = uploadStatus.map((item) => item.secure_url);
+    // const uploadStatus = await Promise.all(imagesToUpload);
+    // const imgurl = uploadStatus.map((item) => item.secure_url);
 
-    if (!uploadStatus) {
-        return res.status(500).json({
-            error: "Images cannot upload!",
-            status: false
-        });
-    }
+    // if (!uploadStatus) {
+    //     return res.status(500).json({
+    //         error: "Images cannot upload!",
+    //         status: false
+    //     });
+    // }
 
     const product = await Product.findByIdAndUpdate(
         req.params.id,
         {
-            name:req.body.name,
+        name:req.body.name,
         description:req.body.description,
-        images:imgurl,
+        images:imagesArr,
         brand:req.body.brand,
         price:req.body.price,
         category:req.body.category,
